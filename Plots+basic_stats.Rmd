@@ -1,0 +1,301 @@
+---
+title: "Plots + basic stats for HR Paper"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/Users/eliza/Desktop/FINAL 2025")
+#sometimes it has a space at the end of it 
+```
+##################################################
+############ FIGURE 1 CODE FOR PAPER #############
+#Make map 
+```{r}
+
+getwd()
+setwd("/Users/eliza/Desktop/FINAL 2025/mapping ")
+
+##### Load required packages
+
+library(rworldmap)
+library(sp)
+library(sf)
+library(cartography)
+library(ggplot2)
+library(dplyr)
+library(viridis)
+library(ggdensity)
+library(ggforce)
+
+##### Bring in raw data file for nesting locations
+
+nesting.locations <- read.csv("locations_individual.csv", header = TRUE)
+
+##### Basemaps 
+
+canada_basemap <- map_data("world") %>% 
+  filter(region == "Canada")
+
+mexico_basemap <- map_data("world") %>% 
+  filter(region == "Mexico")
+
+######## REDO IT ##################
+
+BOW <- st_read("BOW_lines.shp")
+BOW <- BOW %>% filter(adm0_a3 %in% c("CAN", "USA"))
+usa <- st_read("usa_canada.shp")
+mexico_states <- st_read("mexico_states.shp")
+lakes <- st_read("North_America_Major_Lakes.shp")
+
+map <- ggplot() +  theme_bw() + 
+  #Add in the canada background layer
+  geom_polygon(data=canada_basemap, aes(x=long, y=lat, group=group), 
+               fill="grey90", color="white", linewidth=0.35) +
+   geom_polygon(data=mexico_basemap, aes(x=long, y=lat, group=group), 
+               fill="grey90", color="white", linewidth=0.35) +
+   # Background map for USA 
+  geom_sf(data=usa, fill="grey90", color="white", linewidth=0.35) +
+  geom_sf(data=lakes, fill="white", color="white", linewidth=0.35) +
+ # Boundary lines 
+  geom_sf(data=BOW, color="white", linewidth=0.35) +
+   # Boundary lines 
+  geom_sf(data=mexico_states, color="white", linewidth=0.35) +
+  # Nesting locations as points
+  geom_point(data = nesting.locations,
+  aes(
+    x = Longitude,
+    y = Latitude,
+    fill = Ecosystem_condensed
+  ),
+  size = 2,
+  shape = 21,
+  stroke = 1,
+  color = "black"
+) +
+  # Axis labels
+  xlab("Longitude") +
+  ylab("Latitude") +
+  # Theme tweaks
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(),
+        legend.title = element_blank(),
+        axis.title = element_text(size=10),
+        axis.text = element_text(size=8)) +  
+  # Modify the Y-axis to remove "degrees N"
+  scale_y_continuous(labels = scales::number_format(accuracy = 1)) +
+  # Modify X-axis (Longitude)
+  scale_x_continuous(labels = scales::number_format(accuracy = 1)) +
+  # Proper map coordinate system
+  coord_sf(xlim = c(-165.5, -60), ylim = c(27.5, 71), expand=FALSE)
+
+
+map
+
+ggsave("map_final2.pdf", plot = map, width = 8, height = 6, units = "in")
+
+
+```
+
+#Make violin plot for sex
+```{r}
+
+
+
+
+
+getwd()
+
+library(ggplot2)
+library(ggforce)
+library(ggeffects)
+
+
+final <- read.csv("full.csv")
+
+sex <- ggplot(final, aes(x=Sex, y=Est)) + geom_violin(trim=TRUE, alpha= 0.2)  +theme(
+    panel.grid.major = element_blank(),  # Removes major grid lines
+   panel.grid.minor = element_blank(),  # Removes minor grid lines
+  panel.background = element_blank()) + # Ensures no panel background
+
+  geom_jitter(width=0.2, height=0, color="coral4", shape=16, size=3, fill = "white") + ylab("95% AKDE Home Range Size (km^2)") 
+sex
+
+
+####geom_sina
+
+sex <- ggplot(final, aes(x = Sex, y = Est)) +
+  geom_violin(trim = TRUE, alpha = 0.2) +
+  geom_sina(
+    aes(color = Sex), 
+    size = 3, 
+    alpha = 0.8
+  ) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  ylab("95% AKDE Home Range Size (km^2)")
+
+sex
+
+ggsave("sex_final3.pdf", plot = sex, width = 8, height = 6, units = "in")
+
+
+
+nrow(final)
+
+```
+
+#Get some basic stats
+```{r}
+
+#how many birds 
+
+length(unique(final$name))
+
+table(final$name)
+
+list(unique(final$name))
+
+
+#days used
+median(final$Days_used)
+mean(final$Days_used)
+range(final$Days_used)
+
+#number of points
+median(final$Points)
+mean(final$Points)
+range(final$Points)
+
+#ecoregion
+mean(final$Est[final$Ecosystem_condensed == "Open"], na.rm = TRUE)
+mean(final$Est[final$Ecosystem_condensed == "Taiga"], na.rm = TRUE)
+mean(final$Est[final$Ecosystem_condensed == "Forest"], na.rm = TRUE)
+
+mean(final_forested$Est)
+
+
+#mean 
+mean(final$Est)
+sd(final$Est)
+range(final$Est)
+
+#get the mean but only for rows that have condition 
+mean(final$Est[final$Sex == "M"], na.rm = TRUE)
+sd(final$Est[final$Sex == "M"], na.rm = TRUE)
+range(final$Est[final$Sex == "M"], na.rm = TRUE)
+sum(!is.na(final$Est[final$Sex == "M"]))
+
+mean(final$Est[final$Sex == "F"], na.rm = TRUE)
+sd(final$Est[final$Sex == "F"], na.rm = TRUE)
+range(final$Est[final$Sex == "F"], na.rm = TRUE)
+sum(!is.na(final$Est[final$Sex == "F"]))
+
+
+hist(final$Est[final$Sex == "F"], main= "Home Range Size for Females", xlab="95% AKDE Home Range (square kilometers)")
+
+hist(final$Est, main="Nesting Home Range Size in Red-tailed Hawks", xlab= "95% AKDE Home Range (square kilometers)")
+
+table(final$Est[final$Sex == "F"])
+
+new_final <- read.csv("table1.csv")
+
+
+#t test for sex
+
+
+males <- (final$Est[final$Sex == "M"])
+females <- (final$Est[final$Sex == "F"])
+
+t.test(males, females, var.equal= TRUE)
+
+getwd()
+
+```
+#plot ecoregions
+
+```{r}
+
+final <- read.csv("final_all.csv")
+
+library(ggplot2)
+
+
+results <- data.frame(
+  Covariate = c("Intercept (Boreal)", "Open", "Northern Boreal"),
+  Mean = c(0.30, -0.71, 0.55),
+  Lower_95_CI = c(-0.14, -1.26, 0.03),
+  Upper_95_CI = c(0.72, -0.14, 1.07)
+)
+
+
+
+
+#another violin plot 
+
+getwd()
+
+pdf("ecoregions_violin1.pdf", width = 7, height = 5)
+
+ggplot(final, aes(x = Ecosystem_condensed, y = Est)) +
+  geom_violin(trim = TRUE, alpha = 0.2) +
+  geom_sina(
+    aes(color = Sex), 
+    size = 3, 
+    alpha = 0.8,
+    position = position_jitter(width = 0.15)
+  ) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  ylab("95% AKDE Home Range Size (km^2)")
+
+dev.off()
+
+ecoregions
+
+
+
+
+      
+```
+
+#roads vs ecoregion 
+
+```{r}
+
+roads <- ggplot(final, aes(x = Roads_normalized, y = Ecosystem_condensed)) +
+  geom_violin(trim = TRUE, alpha = 0.2) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()
+  ) +
+  ylab("Ecoregion")
+
+roads
+
+
+
+
+```
+
+POINTS
+```{R}
+
+getwd()
+
+points <- read.csv("output.csv", header = TRUE)
+
+table(points$Hawk.ID)
+
+length(table(points$Hawk.ID))
+
+
+
+```
