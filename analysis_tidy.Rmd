@@ -1,22 +1,21 @@
 ---
-title: "model analysis"
+title: "Model Analysis"
 author: "Eliza Wein and Andrew Stillman"
 date: "2026-06-25"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include = FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-
 ```
 
-set up 
-```{r}
+## Setup
 
+```{r load-data}
 library(lme4)
 library(dplyr)
 library(stringr)
-library(MuMIn)  # This package has functions for R-squared values for lmer models
+library(MuMIn)        # R-squared values for lmer models
 library(performance)
 library(emmeans)
 library(ggplot2)
@@ -28,10 +27,9 @@ nsim <- 50
 setwd("your_working_directory")
 getwd()
 
+# ---- 1. Load data and standardize covariates ----
 
-#### ----------- 1. Load data and standardize the covariates for better modeling------------ ####
-
-#### Load and organize data
+# Load and organize data
 final <- read.csv("data.csv")
 final$Est_log <- log(final$Est)
 final[is.na(final)] <- 0
@@ -39,111 +37,119 @@ final$Year <- str_sub(final$uniqueID, -4)
 final <- final %>%
   filter(Layer == "est")
 
-#add column for name 
+# Add a column for bird name (uniqueID without the year)
 final$name <- sub("_.*$", "", final$uniqueID)
 table(final$name)
-#How many unique birds are there?
+
+# How many unique birds are there?
 unique(final$name)
 
-#### Standardize covariates by subtracting the mean and dividing by standard deviation
+# Standardize covariates: subtract the mean and divide by the standard deviation
 final <- final %>% mutate(
   Roads_normalized_s = (Roads_normalized - mean(Roads_normalized)) / sd(Roads_normalized),
-  CC_Mean_s = (CC_mean - mean(CC_mean)) / sd(CC_mean),
-  CC_stdev_s = (CC_stdev - mean(CC_stdev)) / sd(CC_stdev),
-  Herb_Crop_s = (Herb_Crop - mean(Herb_Crop)) / sd(Herb_Crop),
-  Nat_Herb_s = (Nat_Herb - mean(Nat_Herb)) / sd(Nat_Herb),
-  Days_used_s = (Days_used - mean(Days_used)) / sd(Days_used), 
-  Points_s = (Points - mean(Points)) / sd(Points)
+  CC_Mean_s          = (CC_mean - mean(CC_mean)) / sd(CC_mean),
+  CC_stdev_s         = (CC_stdev - mean(CC_stdev)) / sd(CC_stdev),
+  Herb_Crop_s        = (Herb_Crop - mean(Herb_Crop)) / sd(Herb_Crop),
+  Nat_Herb_s         = (Nat_Herb - mean(Nat_Herb)) / sd(Nat_Herb),
+  Days_used_s        = (Days_used - mean(Days_used)) / sd(Days_used),
+  Points_s           = (Points - mean(Points)) / sd(Points)
 )
 ```
 
-one ecoregion at a time 
-```{r}
+## Models by ecoregion
 
-#run model just for one eco-region
+```{r models}
+# ---- 2. Subset data by ecoregion ----
+
+# Open ecoregion only
 final_open <- final %>%
   filter(Ecosystem_condensed == "Open")
-sum(final$Ecosystem_condensed== "Open")
+sum(final$Ecosystem_condensed == "Open")
 
-#for forested
+# Forested ecoregions only (Mixed Forests and Northern Boreal)
 final_forested <- final %>%
   filter(Ecosystem_condensed %in% c("Mixed Forests", "Northern Boreal"))
 
-#combine open and forested 
+# Open and forested combined, with forested ecoregions grouped together
 final_open_forested <- final %>%
   mutate(Ecoregion_grouped = case_when(
     Ecosystem_condensed %in% c("Forest", "Taiga") ~ "Forested",
-    TRUE ~ Ecosystem_condensed))
+    TRUE ~ Ecosystem_condensed
+  ))
 
-#### Run the mixed effects model
+# ---- 3. Mixed effects models ----
+# Each model below overwrites `mod`; the last one run is used for the CIs and
+# predictions that follow.
 
-#test for effects of latitude
-mod <- lmer(Est_log ~ Sex + Longitude + (1|name), data = final)
+# Test for effects of longitude
+mod <- lmer(Est_log ~ Sex + Longitude + (1 | name), data = final)
 
-#everything together (to test for collinearity)
-mod <- lmer(Est_log ~ Sex + Roads_normalized_s + CC_Mean_s + CC_stdev_s + Herb_Crop_s + Nat_Herb_s + Ecosystem_condensed + (1|name), data = final)
+# All covariates together (to test for collinearity)
+mod <- lmer(Est_log ~ Sex + Roads_normalized_s + CC_Mean_s + CC_stdev_s +
+              Herb_Crop_s + Nat_Herb_s + Ecosystem_condensed + (1 | name),
+            data = final)
 
 check_collinearity(mod)
 
-#test for forested
-mod <- lmer(Est_log ~ Roads_normalized_s + Sex + CC_Mean_s + CC_stdev_s + Herb_Crop_s + Nat_Herb_s + (1|name), data = final_forested)
+# Forested ecoregions
+mod <- lmer(Est_log ~ Roads_normalized_s + Sex + CC_Mean_s + CC_stdev_s +
+              Herb_Crop_s + Nat_Herb_s + (1 | name),
+            data = final_forested)
 
-#test for sex interactions
-mod <- lmer(Est_log ~ Nat_Herb_s*Sex + (1|name), data = final)
+# Sex interactions
+mod <- lmer(Est_log ~ Nat_Herb_s * Sex + (1 | name), data = final)
 
-#test for open 
-#replace variable to test individually and rerun
-mod <- lmer(Est_log ~ Sex + Herb_Crop_s + (1|name), data = final_open)
+# Open ecoregion (swap in each covariate individually and rerun)
+mod <- lmer(Est_log ~ Sex + Herb_Crop_s + (1 | name), data = final_open)
 
-#test for ecoregions
-mod <- lmer(Est_log ~ Ecosystem_condensed + Sex + (1|name), data = final)
+# Differences among ecoregions
+mod <- lmer(Est_log ~ Ecosystem_condensed + Sex + (1 | name), data = final)
 
 emmeans(mod, pairwise ~ Ecosystem_condensed)
 
-#test for total points and days used
-mod <- lmer(Est_log ~ Sex + Points_s + Days_used_s + (1|name), data = final)
-#check cor
+# Total points and days used
+mod <- lmer(Est_log ~ Sex + Points_s + Days_used_s + (1 | name), data = final)
+
+# Check correlation between points and days used
 cor(final$Points, final$Days_used, use = "complete.obs")
 
-#plot total days used
+# Plot home range size against total days used
 ggplot(final, aes(x = Days_used, y = Est_log)) +
   geom_point() +
   geom_smooth(method = "lm")
 
-#plot total points
+# Plot home range size against total points
 ggplot(final, aes(x = Points, y = Est_log)) +
   geom_point() +
   geom_smooth(method = "lm")
 
-## R-squared value to assess how well the model fits
+# Model fit: R-squared, residual normality, and collinearity
 MuMIn::r.squaredGLMM(object = mod)
 qqnorm(resid(mod))
 check_collinearity(mod)
 
-#### ---------------------------------- 3. CIs -------------------------------------- ####
+# ---- 4. Confidence intervals ----
 
-#### Generate CIs with bootMer
-simsCI <- bootMer(mod, FUN=fixef, nsim=500) # "fixef" means bootstrapping fixed effects estimates
-dim(simsCI$t) # the "t" object has 500 estimates for each of our fixed effects!
+# Bootstrap the fixed effects estimates with bootMer
+simsCI <- bootMer(mod, FUN = fixef, nsim = 500)
+dim(simsCI$t)  # 500 bootstrap estimates for each fixed effect
 # View(simsCI$t)
-apply(simsCI$t, 2, quantile, c(0.025, 0.975))  # 95% CIs on the coefficients 
+apply(simsCI$t, 2, quantile, c(0.025, 0.975))  # 95% CIs on the coefficients
 
-## Organize CIs to export for manuscript table
-CIs <- apply(simsCI$t, 2, quantile, c(0.025, 0.975))  
+# Organize CIs for the manuscript table
+CIs <- apply(simsCI$t, 2, quantile, c(0.025, 0.975))
 estimates <- data.frame(Covariate = colnames(simsCI$t),
-                        Mean = round(fixef(mod), 2),
-                        Lower95 = round(CIs[1, ], 2),
-                        Upper95 = round(CIs[2, ], 2))
+                        Mean      = round(fixef(mod), 2),
+                        Lower95   = round(CIs[1, ], 2),
+                        Upper95   = round(CIs[2, ], 2))
 
 estimates
-
 ```
 
-plotting effects for forested and open
-```{r}
-#for all forested only (mixed forests plus northern boreal)
+## Effect plot for forested ecoregions
 
-# Data
+```{r forest-effects-plot}
+# Effect estimates for all forested ecoregions (Mixed Forests and Northern Boreal)
 effects <- data.frame(
   Covariate = c("Intercept",
                 "Sex (M)",
@@ -152,18 +158,18 @@ effects <- data.frame(
                 "Canopy Cover SD",
                 "Herbaceous Croplands",
                 "Natural Herbaceous"),
-  Mean = c(0.3, 1.92, -0.38, 0.07, 0.34, -0.39, 0.1),
+  Mean    = c(0.3, 1.92, -0.38, 0.07, 0.34, -0.39, 0.1),
   Lower95 = c(-0.1, 1.39, -0.62, -0.31, 0.01, -0.86, -0.31),
   Upper95 = c(0.71, 2.39, -0.16, 0.38, 0.71, 0.09, 0.52)
 )
 
-# Order from top to bottom
+# Order covariates from top to bottom
 effects$Covariate <- factor(
   effects$Covariate,
   levels = rev(effects$Covariate)
 )
 
-pdf(file="Forested_all_variables.pdf", width = 5, height = 5)
+pdf(file = "Forested_all_variables.pdf", width = 5, height = 5)
 
 forest_plot <- ggplot(effects, aes(x = Mean, y = Covariate)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
@@ -182,244 +188,290 @@ forest_plot <- ggplot(effects, aes(x = Mean, y = Covariate)) +
 
 ggsave("forest_effects.pdf", plot = forest_plot,
        width = 7, height = 5, units = "in")
-
 ```
 
-plotting-- for all variables (original)
-```{r}
+## Predictions for plotting
 
-#need this for Forested: roads, canopy cover SD and for open herbaceous croplands + sex nat herb forested
+```{r predictions}
+# Covariates needed: roads and canopy cover SD (forested), herbaceous croplands
+# (open), and natural herbaceous (forested)
 
-#start with forested 
-
-#### ----------------------- 4. Generate predictions for plotting --------------------------------- ####
+# ---- 5. Generate predictions for plotting ----
 
 nsim <- 50
 
-#### Generate predictions for plotting
-# In order to make a pretty plot, we need to give the model a series of x values 
-# and have it predict y values. Just like with fixed effects estimates above, 
-# it's easy to get mean predictions but more complicated to get uncertainty. 
-# We'll need to use the bootMer function again to get CIs on the predictions. 
+# To make a plot, we give the model a series of x values and have it predict
+# y values. As with the fixed effects estimates above, mean predictions are
+# easy, but uncertainty is more complicated, so we use bootMer again to get
+# CIs on the predictions.
 
-## Start by making a sequence for the covariates we want to plot
-x.CC_stdev <- seq(from = min(final_forested$CC_stdev_s), to = quantile(final_forested$CC_stdev_s, probs = 0.95), length.out = nsim)
+# Sequences of standardized covariate values to predict over
+x.CC_stdev <- seq(from = min(final_forested$CC_stdev_s),
+                  to = quantile(final_forested$CC_stdev_s, probs = 0.95),
+                  length.out = nsim)
 
-x.herb_crop <- seq(from = min(final_open$Herb_Crop_s), to = max(final_open$Herb_Crop_s), length.out = nsim)
-x.nat_herb <- seq(from = min(final_forested$Nat_Herb_s), to = max(final_forested$Nat_Herb_s), length.out = nsim)
-x.CC_mean <- seq(from = min(final_forested$CC_Mean_s), to = max(final_forested$CC_Mean_s), length.out = nsim)
+x.herb_crop <- seq(from = min(final_open$Herb_Crop_s),
+                   to = max(final_open$Herb_Crop_s),
+                   length.out = nsim)
+x.nat_herb <- seq(from = min(final_forested$Nat_Herb_s),
+                  to = max(final_forested$Nat_Herb_s),
+                  length.out = nsim)
+x.CC_mean <- seq(from = min(final_forested$CC_Mean_s),
+                 to = max(final_forested$CC_Mean_s),
+                 length.out = nsim)
 
-x.Roads_normalized_s <- seq(from = min(final_forested$Roads_normalized_s), to = max(final_forested$Roads_normalized_s), length.out = nsim)
+x.Roads_normalized_s <- seq(from = min(final_forested$Roads_normalized_s),
+                            to = max(final_forested$Roads_normalized_s),
+                            length.out = nsim)
 
-
-## Generate datasets for prediction
-# In order to make predictions for 1 variable, we will hold all other variables at their means
-# Because we standardized covariates, the means are all 0 (or very close to 0)
-new.data.CC_stdev <- data.frame(Sex = "M",    
+# Datasets for prediction: vary one covariate and hold all others at their
+# means. Because the covariates are standardized, their means are 0.
+new.data.CC_stdev <- data.frame(Sex                = "M",
                                 Roads_normalized_s = 0,
-                                CC_Mean_s = 0,
-                                CC_stdev_s = x.CC_stdev,
-                                Herb_Crop_s = 0,
-                                Nat_Herb_s = 0)
-new.data.herb_crop <- data.frame(Sex = "M",    
+                                CC_Mean_s          = 0,
+                                CC_stdev_s         = x.CC_stdev,
+                                Herb_Crop_s        = 0,
+                                Nat_Herb_s         = 0)
+
+new.data.herb_crop <- data.frame(Sex                = "M",
+                                 Roads_normalized_s = 0,
+                                 CC_Mean_s          = 0,
+                                 CC_stdev_s         = 0,
+                                 Herb_Crop_s        = x.herb_crop,
+                                 Nat_Herb_s         = 0)
+
+new.data.nat_herb <- data.frame(Sex                = "M",
                                 Roads_normalized_s = 0,
-                                CC_Mean_s = 0,
-                                CC_stdev_s = 0,
-                                Herb_Crop_s = x.herb_crop,
-                                Nat_Herb_s = 0)
-new.data.nat_herb <- data.frame(Sex = "M",    
-                                Roads_normalized_s = 0,
-                                CC_Mean_s = 0,
-                                CC_stdev_s = 0,
-                                Herb_Crop_s = 0,
-                                Nat_Herb_s = x.nat_herb)
+                                CC_Mean_s          = 0,
+                                CC_stdev_s         = 0,
+                                Herb_Crop_s        = 0,
+                                Nat_Herb_s         = x.nat_herb)
 
-new.data.CC_mean <- data.frame(Sex = "M",    
-                                Roads_normalized_s = 0,
-                                CC_Mean_s = x.CC_mean,
-                                CC_stdev_s = 0,
-                                Herb_Crop_s = 0,
-                                Nat_Herb_s = 0)
+new.data.CC_mean <- data.frame(Sex                = "M",
+                               Roads_normalized_s = 0,
+                               CC_Mean_s          = x.CC_mean,
+                               CC_stdev_s         = 0,
+                               Herb_Crop_s        = 0,
+                               Nat_Herb_s         = 0)
 
-new.data.Roads_normalized <- data.frame(Sex = "M",    
-                                Roads_normalized_s = x.Roads_normalized_s,
-                                CC_Mean_s = 0,
-                                CC_stdev_s = 0,
-                                Herb_Crop_s = 0,
-                                Nat_Herb_s = 0)
+new.data.Roads_normalized <- data.frame(Sex                = "M",
+                                        Roads_normalized_s = x.Roads_normalized_s,
+                                        CC_Mean_s          = 0,
+                                        CC_stdev_s         = 0,
+                                        Herb_Crop_s        = 0,
+                                        Nat_Herb_s         = 0)
 
-## Generate predictions of the mean relationship
-?predict.merMod # information on what the predict function is doing here. 
+# Mean predictions (see ?predict.merMod for details)
+?predict.merMod
 
-pred.CC_stdev <- predict(mod, type = "response", re.form=NA, 
-                        newdata = new.data.CC_stdev)
-pred.herb_crop <- predict(mod, type = "response", re.form=NA, 
-                         newdata = new.data.herb_crop)
-pred.nat_herb <- predict(mod, type = "response", re.form=NA, 
-                          newdata = new.data.nat_herb)
-pred.CC_mean <- predict(mod, type = "response", re.form=NA, 
-                         newdata = new.data.CC_mean)
-pred.Roads_normalized <- predict(mod, type = "response", re.form=NA, 
-                         newdata = new.data.Roads_normalized)
+pred.CC_stdev <- predict(mod, type = "response", re.form = NA,
+                         newdata = new.data.CC_stdev)
+pred.herb_crop <- predict(mod, type = "response", re.form = NA,
+                          newdata = new.data.herb_crop)
+pred.nat_herb <- predict(mod, type = "response", re.form = NA,
+                         newdata = new.data.nat_herb)
+pred.CC_mean <- predict(mod, type = "response", re.form = NA,
+                        newdata = new.data.CC_mean)
+pred.Roads_normalized <- predict(mod, type = "response", re.form = NA,
+                                 newdata = new.data.Roads_normalized)
 
-
-## Generate confidence intervals on predictions for CC_stdev, Herb_Crop, and Nat_Herb
+# Bootstrapped confidence intervals on the predictions
 CI.CC_stdev <- bootMer(mod,
-                       nsim = nsim, 
-                       FUN=function(x) {predict(x, newdata = new.data.CC_stdev, type = "response", re.form = NA) }) 
+                       nsim = nsim,
+                       FUN = function(x) {
+                         predict(x, newdata = new.data.CC_stdev,
+                                 type = "response", re.form = NA)
+                       })
+
 CI.herb_crop <- bootMer(mod,
-                       nsim = nsim, 
-                       FUN=function(x) {predict(x, newdata = new.data.herb_crop, type = "response", re.form = NA) }) 
+                        nsim = nsim,
+                        FUN = function(x) {
+                          predict(x, newdata = new.data.herb_crop,
+                                  type = "response", re.form = NA)
+                        })
 
 CI.nat_herb <- bootMer(mod,
-                       nsim = nsim, 
-                       FUN=function(x) {predict(x, newdata = new.data.nat_herb, type = "response", re.form = NA) }) 
+                       nsim = nsim,
+                       FUN = function(x) {
+                         predict(x, newdata = new.data.nat_herb,
+                                 type = "response", re.form = NA)
+                       })
 
 CI.CC_mean <- bootMer(mod,
-                       nsim = nsim, 
-                       FUN=function(x) {predict(x, newdata = new.data.CC_mean, type = "response", re.form = NA) }) 
+                      nsim = nsim,
+                      FUN = function(x) {
+                        predict(x, newdata = new.data.CC_mean,
+                                type = "response", re.form = NA)
+                      })
 
 CI.Roads_normalized <- bootMer(mod,
-                       nsim = nsim, 
-                       FUN=function(x) {predict(x, newdata = new.data.Roads_normalized, type = "response", re.form = NA) }) 
+                               nsim = nsim,
+                               FUN = function(x) {
+                                 predict(x, newdata = new.data.Roads_normalized,
+                                         type = "response", re.form = NA)
+                               })
 
-#### ------------------------- 5. Finally, we're ready to plot! ---------------------------- ####
-# I'm using base R code similar to Courtney's class here, but you should feel free to use ggplot
+# ---- 6. Covariate sequences on the original (unstandardized) scale ----
+# These match the standardized sequences above and are used for the x axes.
+# Base R plotting is used below, but ggplot would work too.
 
-## Create sequences of covariates NOT on the standardized scale
-x.CC_stdev.raw <- seq(from = min(final_forested$CC_stdev), to = quantile(final_forested$CC_stdev, probs = 0.95), length.out = nsim)
-x.herb_crop.raw <- seq(from = min(final_open$Herb_Crop), to = max(final_open$Herb_Crop), length.out = nsim)
-x.nat_herb.raw <- seq(from = min(final_forested$Nat_Herb), to = max(final_forested$Nat_Herb), length.out = nsim)
-x.CC_mean.raw <- seq(from = min(final_forested$CC_Mean), to = max(final_forested$CC_Mean), length.out = nsim)
+x.CC_stdev.raw <- seq(from = min(final_forested$CC_stdev),
+                      to = quantile(final_forested$CC_stdev, probs = 0.95),
+                      length.out = nsim)
+x.herb_crop.raw <- seq(from = min(final_open$Herb_Crop),
+                       to = max(final_open$Herb_Crop),
+                       length.out = nsim)
+x.nat_herb.raw <- seq(from = min(final_forested$Nat_Herb),
+                      to = max(final_forested$Nat_Herb),
+                      length.out = nsim)
+x.CC_mean.raw <- seq(from = min(final_forested$CC_Mean),
+                     to = max(final_forested$CC_Mean),
+                     length.out = nsim)
 
-x.Roads_normalized.raw <- seq(from = min(final_forested$Roads_normalized_s), to = max(final_forested$Roads_normalized_s), length.out = nsim)
-
-
-#### 3-panel plot with Herb_Crop on top, y axis on the data scale
-
+x.Roads_normalized.raw <- seq(from = min(final_forested$Roads_normalized_s),
+                              to = max(final_forested$Roads_normalized_s),
+                              length.out = nsim)
 ```
-Plotting
-```{r}
 
-pdf(file="Forested_all_variables.pdf", width = 5, height = 5)
+## Plotting
 
-par(mfrow = c(2,2), mar = c(3,3,1,1), tcl = 0.3, mgp = c(1.5,0.2,0), las= 1,
-    cex.axis = 0.8, cex.lab = 0.8)
+```{r plotting}
+# ---- 7. Prediction plots, y axis on the log scale ----
+# Multi-panel plot with herbaceous croplands in the top left panel
 
-## Herbaceous Croplands
-plot(x = x.herb_crop.raw, y = pred.herb_crop, ylim = c(0,3.3), bty="l", type="n",
-     xlab = "% cover herbaceous croplands" , ylab="log (Home range size)")
-polygon(c(x.herb_crop.raw, rev(x.herb_crop.raw)), 
-        c(apply(CI.herb_crop$t, 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(CI.herb_crop$t, 2, quantile, probs = 0.975, na.rm = T))), col = "#900C3F80", border = NA)
+pdf(file = "Forested_all_variables.pdf", width = 5, height = 5)
+
+par(mfrow = c(2, 2), mar = c(3, 3, 1, 1), tcl = 0.3, mgp = c(1.5, 0.2, 0),
+    las = 1, cex.axis = 0.8, cex.lab = 0.8)
+
+# Herbaceous croplands
+plot(x = x.herb_crop.raw, y = pred.herb_crop, ylim = c(0, 3.3), bty = "l", type = "n",
+     xlab = "% cover herbaceous croplands", ylab = "log (Home range size)")
+polygon(c(x.herb_crop.raw, rev(x.herb_crop.raw)),
+        c(apply(CI.herb_crop$t, 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(CI.herb_crop$t, 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#900C3F80", border = NA)
 lines(x = x.herb_crop.raw, y = pred.herb_crop, col = "black", lwd = 2)
 
-## Natural Herbaceous
-plot.new()  # skips the top right panel
-plot(x = x.nat_herb.raw, y = pred.nat_herb, ylim = c(0,3.3), bty="l", type="n",
-     xlab = "% cover natural herbaceous" , ylab="log (Home range size)")
-polygon(c(x.nat_herb.raw, rev(x.nat_herb.raw)), 
-        c(apply(CI.nat_herb$t, 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(CI.nat_herb$t, 2, quantile, probs = 0.975, na.rm = T))), col = "#900C3F80", border = NA)
+# Skip the top right panel
+plot.new()
+
+# Natural herbaceous
+plot(x = x.nat_herb.raw, y = pred.nat_herb, ylim = c(0, 3.3), bty = "l", type = "n",
+     xlab = "% cover natural herbaceous", ylab = "log (Home range size)")
+polygon(c(x.nat_herb.raw, rev(x.nat_herb.raw)),
+        c(apply(CI.nat_herb$t, 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(CI.nat_herb$t, 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#900C3F80", border = NA)
 lines(x = x.nat_herb.raw, y = pred.nat_herb, col = "black", lwd = 2)
 
-## Standard deviation of CC
-plot(x = x.CC_stdev.raw, y = pred.CC_stdev, ylim = c(0,3.3), bty="l", type="n",
-     xlab = "Standard deviation of canopy cover" , ylab="log (Home range size)")
-polygon(c(x.CC_stdev.raw, rev(x.CC_stdev.raw)), 
-        c(apply(CI.CC_stdev$t, 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(CI.CC_stdev$t, 2, quantile, probs = 0.975, na.rm = T))), col = "#900C3F80", border = NA)
+# Standard deviation of canopy cover
+plot(x = x.CC_stdev.raw, y = pred.CC_stdev, ylim = c(0, 3.3), bty = "l", type = "n",
+     xlab = "Standard deviation of canopy cover", ylab = "log (Home range size)")
+polygon(c(x.CC_stdev.raw, rev(x.CC_stdev.raw)),
+        c(apply(CI.CC_stdev$t, 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(CI.CC_stdev$t, 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#900C3F80", border = NA)
 lines(x = x.CC_stdev.raw, y = pred.CC_stdev, col = "black", lwd = 2)
-
 
 dev.off()
 
-plot(x = x.CC_mean.raw, y = pred.CC_mean, ylim = c(0,3.3), bty="l", type="n",
-     xlab = "Canopy cover Mean" , ylab="log (Home range size)")
-polygon(c(x.CC_mean.raw, rev(x.CC_mean.raw)), 
-        c(apply(CI.CC_mean$t, 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(CI.CC_mean$t, 2, quantile, probs = 0.975, na.rm = T))), col = "#900C3F80", border = NA)
+# Mean canopy cover
+plot(x = x.CC_mean.raw, y = pred.CC_mean, ylim = c(0, 3.3), bty = "l", type = "n",
+     xlab = "Canopy cover Mean", ylab = "log (Home range size)")
+polygon(c(x.CC_mean.raw, rev(x.CC_mean.raw)),
+        c(apply(CI.CC_mean$t, 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(CI.CC_mean$t, 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#900C3F80", border = NA)
 lines(x = x.CC_mean.raw, y = pred.CC_mean, col = "black", lwd = 2)
 
+# ---- 8. Prediction plots, y axis on the data scale (not log scale) ----
 
-#### 3-panel plot with y axis on the data scale (not log scale)
+pdf(file = "plot_all.pdf", width = 5, height = 5)
 
-pdf(file="plot_all.pdf", width = 5, height = 5)
+par(mfrow = c(2, 2), mar = c(3, 3, 1, 1), tcl = 0.3, mgp = c(1.5, 0.2, 0),
+    las = 1, cex.axis = 0.8, cex.lab = 0.8)
 
-par(mfrow = c(2,2), mar = c(3,3,1,1), tcl = 0.3, mgp = c(1.5,0.2,0), las= 1,
-    cex.axis = 0.8, cex.lab = 0.8)
+# Make it narrower
+par(mfrow = c(2, 2), mar = c(3, 4, 1, 2), tcl = 0.3, mgp = c(1.5, 0.2, 0),
+    las = 1, cex.axis = 0.8, cex.lab = 0.8)
 
-#make it narrower 
-par(mfrow = c(2,2), mar = c(3,4,1,2), tcl = 0.3, mgp = c(1.5,0.2,0), las= 1,
-    cex.axis = 0.8, cex.lab = 0.8)
+pdf(file = "herb_crop_open.pdf", width = 5, height = 5)
 
-
-pdf(file="herb_crop_open.pdf", width = 5, height = 5)
-
-## Herbaceous Croplands
-plot(x = x.herb_crop.raw, y = exp(pred.herb_crop), ylim = c(0,23), cex.main= 0.8, xlim= c(0,100), bty="l", type="n", main= "Herb Cropland for Open",
-     xlab = "% cover herbaceous croplands" , ylab="Home range size (ha)")
-polygon(c(x.herb_crop.raw, rev(x.herb_crop.raw)), 
-        c(apply(exp(CI.herb_crop$t), 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(exp(CI.herb_crop$t), 2, quantile, probs = 0.975, na.rm = T))), col = "#B02526", border = NA)
+# Herbaceous croplands (open)
+plot(x = x.herb_crop.raw, y = exp(pred.herb_crop), ylim = c(0, 23), cex.main = 0.8,
+     xlim = c(0, 100), bty = "l", type = "n", main = "Herb Cropland for Open",
+     xlab = "% cover herbaceous croplands", ylab = "Home range size (ha)")
+polygon(c(x.herb_crop.raw, rev(x.herb_crop.raw)),
+        c(apply(exp(CI.herb_crop$t), 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(exp(CI.herb_crop$t), 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#B02526", border = NA)
 lines(x = x.herb_crop.raw, y = exp(pred.herb_crop), col = "black", lwd = 2)
 
 dev.off()
 
 getwd()
 
-## Natural Herbaceous
-# skips the top right panel
-plot(x = x.nat_herb.raw, y = exp(pred.nat_herb), ylim = c(0,23), bty="l", type="n",
-     xlab = "% cover natural herbaceous" , ylab="Home range size (ha)")
-polygon(c(x.nat_herb.raw, rev(x.nat_herb.raw)), 
-        c(apply(exp(CI.nat_herb$t), 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(exp(CI.nat_herb$t), 2, quantile, probs = 0.975, na.rm = T))), col = "#B02526", border = NA)
+# Natural herbaceous
+plot(x = x.nat_herb.raw, y = exp(pred.nat_herb), ylim = c(0, 23), bty = "l", type = "n",
+     xlab = "% cover natural herbaceous", ylab = "Home range size (ha)")
+polygon(c(x.nat_herb.raw, rev(x.nat_herb.raw)),
+        c(apply(exp(CI.nat_herb$t), 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(exp(CI.nat_herb$t), 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#B02526", border = NA)
 lines(x = x.nat_herb.raw, y = exp(pred.nat_herb), col = "black", lwd = 2)
 
+# Standard deviation of canopy cover (forested)
+pdf(file = "cc_stdev_forested.pdf", width = 5, height = 5)
 
-pdf(file="cc_stdev_forested.pdf", width = 5, height = 5)
-## Standard deviation of CC
-plot(x = x.CC_stdev.raw, y = exp(pred.CC_stdev), ylim = c(0,23), bty="l", type="n", cex.main= 0.8,
-     xlab = "Standard deviation of canopy cover" , ylab="Home range size (ha)", main= "Canopy Cover stdev for Forested")
-polygon(c(x.CC_stdev.raw, rev(x.CC_stdev.raw)), 
-        c(apply(exp(CI.CC_stdev$t), 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(exp(CI.CC_stdev$t), 2, quantile, probs = 0.975, na.rm = T))), col = "#B02526", border = NA)
+plot(x = x.CC_stdev.raw, y = exp(pred.CC_stdev), ylim = c(0, 23), bty = "l", type = "n",
+     cex.main = 0.8, xlab = "Standard deviation of canopy cover",
+     ylab = "Home range size (ha)", main = "Canopy Cover stdev for Forested")
+polygon(c(x.CC_stdev.raw, rev(x.CC_stdev.raw)),
+        c(apply(exp(CI.CC_stdev$t), 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(exp(CI.CC_stdev$t), 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#B02526", border = NA)
 lines(x = x.CC_stdev.raw, y = exp(pred.CC_stdev), col = "black", lwd = 2)
 
 dev.off()
 
+# Mean canopy cover (forested)
 pdf("SD_forested2.pdf", width = 7, height = 5)
 
-plot(x = x.CC_mean.raw, y = exp(pred.CC_mean), ylim = c(0,23), bty="l", type="n",
-     xlab = "Mean Canopy Cover" , ylab="Home range size (ha)")
-polygon(c(x.CC_mean.raw, rev(x.CC_mean.raw)), 
-        c(apply(exp(CI.CC_mean$t), 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(exp(CI.CC_mean$t), 2, quantile, probs = 0.975, na.rm = T))), col = "#B02526", border = NA)
+plot(x = x.CC_mean.raw, y = exp(pred.CC_mean), ylim = c(0, 23), bty = "l", type = "n",
+     xlab = "Mean Canopy Cover", ylab = "Home range size (ha)")
+polygon(c(x.CC_mean.raw, rev(x.CC_mean.raw)),
+        c(apply(exp(CI.CC_mean$t), 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(exp(CI.CC_mean$t), 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#B02526", border = NA)
 lines(x = x.CC_mean.raw, y = exp(pred.CC_mean), col = "black", lwd = 2)
 
 dev.off()
 
-
+# Roads (forested)
 pdf("Roads_forested.pdf", width = 7, height = 5)
 
-plot(x = x.Roads_normalized.raw, y = exp(pred.Roads_normalized), cex.main= 0.8,ylim = c(0,23), bty="l", type="n",
-     xlab = "Mean Road Value" , ylab="Home range size (ha)", main= "Roads for Forested Ecoregion")
-polygon(c(x.Roads_normalized.raw, rev(x.Roads_normalized.raw)), 
-        c(apply(exp(CI.Roads_normalized$t), 2, quantile, probs = 0.025, na.rm = T), 
-          rev(apply(exp(CI.Roads_normalized$t), 2, quantile, probs = 0.975, na.rm = T))), col = "#B02526", border = NA)
+plot(x = x.Roads_normalized.raw, y = exp(pred.Roads_normalized), cex.main = 0.8,
+     ylim = c(0, 23), bty = "l", type = "n",
+     xlab = "Mean Road Value", ylab = "Home range size (ha)",
+     main = "Roads for Forested Ecoregion")
+polygon(c(x.Roads_normalized.raw, rev(x.Roads_normalized.raw)),
+        c(apply(exp(CI.Roads_normalized$t), 2, quantile, probs = 0.025, na.rm = TRUE),
+          rev(apply(exp(CI.Roads_normalized$t), 2, quantile, probs = 0.975, na.rm = TRUE))),
+        col = "#B02526", border = NA)
 lines(x = x.Roads_normalized.raw, y = exp(pred.Roads_normalized), col = "black", lwd = 2)
 
-
 getwd()
+
+# ---- 9. Home range size by ecoregion ----
 
 pdf("ecoregions_violin3.pdf", width = 7, height = 5)
 
 ggplot(final, aes(x = Ecosystem_condensed, y = Est)) +
   geom_violin(trim = TRUE, alpha = 0.2) +
   geom_sina(
-    aes(color = Sex), 
-    size = 3, 
+    aes(color = Sex),
+    size = 3,
     alpha = 0.8,
     position = position_jitter(width = 0.15)
   ) +
@@ -431,6 +483,8 @@ ggplot(final, aes(x = Ecosystem_condensed, y = Est)) +
   ylab("95% AKDE Home Range Size (km^2)")
 
 dev.off()
+
+# ---- 10. Effect estimates plot ----
 
 ggplot(results, aes(x = Mean, y = Covariate)) +
   geom_errorbarh(
@@ -444,7 +498,4 @@ ggplot(results, aes(x = Mean, y = Covariate)) +
     y = NULL
   ) +
   theme_classic()
-
-
-
 ```
