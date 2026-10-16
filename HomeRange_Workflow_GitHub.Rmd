@@ -1,0 +1,179 @@
+---
+title: "Home Range Workflow"
+author: "Eliza Wein and Andrew Stillman"
+date: "2024-11-23"
+output: html_document
+---
+
+## Load packages
+
+```{r setup, message = FALSE}
+library(sf)
+library(sp)
+library(dplyr)
+library(ctmm)
+library(tibble)
+```
+
+## Import and clean Movebank data
+
+```{r import}
+
+setwd("your_working_directory")
+
+# Import Red-tailed Hawk Project data from MoveBank
+rtha <- read.csv("Red-tailed Hawk Project.csv")
+
+# Remove unnecessary columns
+rtha <- subset(rtha, select = -c(
+  tag.voltage, study.name, gls.light.level, gps.satellite.count,
+  acceleration.x, acceleration.y, acceleration.z, comments, visible,
+  height.above.ellipsoid, import.marked.outlier, gps.activity.count,
+  gsm.gsm.signal.strength, sensor.type, external.temperature,
+  individual.taxon.canonical.name, algorithm.marked.outlier, height.raw,
+  ground.speed, heading, height.above.msl
+))
+
+# Remove erroneous location data
+rtha <- dplyr::filter(rtha, location.long < 200, location.lat < 200)
+
+# Remove spaces from hawk names and rename ID column
+rtha$individual.local.identifier <- gsub(" ", "", rtha$individual.local.identifier)
+rtha <- rtha %>% rename(HawkID = individual.local.identifier)
+```
+
+## Filter by territory dates
+
+```{r dates}
+# Date_info contains each bird's arrival date at nesting grounds,
+# plus 10-day and 80-day offsets defining the analysis window
+date_info <- read.csv("Date_info.csv")
+
+#Convert dates into UTC format 
+date_info$Beginning    <- as.POSIXct(date_info$Beginning,    tz = "UTC", format = "%Y-%m-%d")
+date_info$Plus.10.days <- as.POSIXct(date_info$Plus.10.days, tz = "UTC", format = "%Y-%m-%d")
+date_info$Plus.80.days <- as.POSIXct(date_info$Plus.80.days, tz = "UTC", format = "%Y-%m-%d")
+str(date_info)
+
+# Format hawk timestamps as Date objects for comparison
+rtha$date <- as.Date(rtha$timestamp, tz = "UTC")
+
+# Merge hawk locations with date windows
+merged <- merge(rtha, date_info, by.x = "Hawk.ID", by.y = "Hawk.ID")
+table(merged$HawkID)
+
+# Keep only locations within the 80 day window
+filtered <- merged %>%
+  dplyr::filter(date >= as.Date(Plus.10.days), date <= as.Date(Plus.80.days)) %>%
+  select(-Plus.80.days, -Plus.10.days, -Beginning)
+
+# Add year and unique bird-year ID
+filtered$year     <- substr(filtered$date, 1, 4)
+filtered$uniqueID <- paste(filtered$HawkID, filtered$year, sep = "_")
+
+unique(filtered$uniqueID)
+table(filtered$uniqueID)
+```
+
+## Subsample locations per day
+
+```{r subsample}
+pts <- filtered  # "pts" = points
+
+str(pts)
+
+# Points and days per bird before subsampling
+sample_size_raw <- pts %>%
+  group_by(uniqueID) %>%
+  summarize(
+    n.points = n(),
+    n.days   = length(unique(date))
+  )
+print(sample_size_raw, n = Inf)
+
+# Sample up to n_per_day locations per day per bird (without replacement).
+# If a day has fewer than n_per_day points, all points are kept.
+n_per_day  <- 10
+output     <- pts[0, ]  # empty frame to accumulate results
+unique_ids <- unique(pts$uniqueID)
+
+for (i in seq_along(unique_ids)) {
+  bird_i      <- pts[pts$uniqueID == unique_ids[i], ]
+  pts_sampled <- bird_i %>%
+    group_by(date) %>%
+    slice_sample(n = n_per_day)
+  output <- rbind(output, pts_sampled)
+}
+
+write.csv(output, "output.csv", row.names = FALSE)
+
+# Verify subsampling
+sample_size_new <- output %>%
+  group_by(uniqueID) %>%
+  summarize(
+    n.points = n(),
+    n.days   = length(unique(date))
+  )
+print(sample_size_new, n = Inf)
+```
+
+## CTMM and shapefile creation
+
+```{r ctmm}
+# CTMM requires a "timestamp" column in "%Y-%m-%dT%H:%M:%S" format and a UUID column.
+# If reading from file or timestamps need reformatting:
+# output$timestamp <- as.POSIXct(gsub("Z$", "", output$timestamp),
+#                                format = "%Y-%m-%dT%H:%M:%S", tz = "UTC")
+
+# Add unique UUID column
+output <- output %>%
+  ungroup() %>%
+  mutate(UUID = row_number())
+
+# Load previous results so each bird's estimates are added rather than overwritten
+if (file.exists("frame.csv")) {
+  results <- read.csv("frame.csv")
+} else {
+  results <- data.frame()
+}
+
+# OUF model starting parameters
+m.ouf <- ctmm(sigma = 23 %#% "km^2", tau = c(6 %#% "day", 1 %#% "hour"))
+
+# ---- Set the bird to process ----
+# Change layer.name to the uniqueID you want to run.
+# Note: if ctmm returns an AKDE list of length 1, re-running usually resolves it.
+layer.name <- "franconia_2024"
+
+# Filter, fit OUF model, and compute weighted AKDE
+bird_tel <- dplyr::filter(output, uniqueID == layer.name)
+bird_tel <- as.telemetry(bird_tel)
+ouf      <- ctmm.fit(bird_tel, m.ouf)
+ud       <- akde(bird_tel, ouf, weights = TRUE)
+
+summary(ud)
+# xlim/ylim are set for one bird; adjust or remove for others
+plot(ud,
+     col.DF   = "firebrick",
+     col.grid = NA,
+     level    = NA,
+     main     = layer.name,
+     xlim     = c(-90, 90),
+     ylim     = c(-1800, 1300))
+
+# Append CI estimates to results frame
+ci_vals  <- summary(ud)[["CI"]]
+hawk_row <- data.frame(Hawk = ci_vals, ID = layer.name)
+results  <- rbind(results[results$ID != layer.name, , drop = FALSE], hawk_row)  # replaces any earlier run of the same bird
+
+# Write 95% UD shapefile (delete_dsn = TRUE lets you re-run without an "already exists" error)
+shp_frame <- SpatialPolygonsDataFrame.UD(ud,
+                                          convex   = FALSE,
+                                          level.UD = 0.95,
+                                          level    = 0.95)
+sf_obj <- st_as_sf(shp_frame)
+st_write(sf_obj, paste0(layer.name, ".shp"), delete_dsn = TRUE)
+
+# Save area estimates
+write.csv(results, "frame.csv", row.names = FALSE)
+```
