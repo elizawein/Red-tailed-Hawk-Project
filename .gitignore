@@ -19,3 +19,6 @@
 *.dbf
 *.prj
 *.cpg
+
+# Shared data tables (exceptions to the rule above)
+!Full_table.csv
