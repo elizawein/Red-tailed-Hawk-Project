@@ -1,0 +1,21 @@
+# RStudio
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# macOS
+.DS_Store
+
+# Knitted output
+*.html
+*_files/
+*_cache/
+
+# Data and results (keep tracking data off GitHub)
+*.csv
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
